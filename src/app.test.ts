@@ -221,10 +221,60 @@ describe("app", () => {
       expect(res.headers.get("WWW-Authenticate")).toContain("Bearer resource_metadata=");
     });
 
-    it("should reject non-POST methods on /mcp", async () => {
+    it("should reject unsupported methods on /mcp", async () => {
       const app = createApp({ env, db: mockDb });
-      const res = await app.request("/mcp", { method: "GET" });
+      const res = await app.request("/mcp", { method: "PUT" });
       expect(res.status).toBe(405);
+    });
+
+    it("should support GET /mcp and GET /sse with SSE stream", async () => {
+      const app = createApp({ env, db: mockDb });
+      const unauthRes = await app.request("/mcp", { method: "GET" });
+      expect(unauthRes.status).toBe(401);
+
+      const authRes = await app.request("/mcp", {
+        method: "GET",
+        headers: { Authorization: `Bearer ${env.API_TOKEN}` }
+      });
+      expect(authRes.status).toBe(200);
+      expect(authRes.headers.get("Content-Type")).toContain("text/event-stream");
+      expect(authRes.headers.get("Mcp-Session-Id")).toBeDefined();
+    });
+    it("should handle CORS preflight OPTIONS request on /mcp", async () => {
+      const app = createApp({ env, db: mockDb });
+      const res = await app.request("/mcp", {
+        method: "OPTIONS",
+        headers: {
+          Origin: "http://localhost:3000",
+          "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Headers": "Authorization, Content-Type, Mcp-Session-Id"
+        }
+      });
+      expect(res.status).toBe(204);
+      expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    });
+
+    it("should authorize via X-API-Token header or query token", async () => {
+      const app = createApp({ env, db: mockDb });
+
+      // X-API-Token header
+      const headerRes = await app.request("/mcp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Token": env.API_TOKEN
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 10, method: "ping" })
+      });
+      expect(headerRes.status).toBe(200);
+
+      // Query param
+      const queryRes = await app.request(`/mcp?token=${env.API_TOKEN}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 11, method: "ping" })
+      });
+      expect(queryRes.status).toBe(200);
     });
 
     it("should handle MCP initialize", async () => {

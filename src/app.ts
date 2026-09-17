@@ -1,4 +1,6 @@
 import { Hono, type Context } from "hono";
+import { cors } from "hono/cors";
+import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { parseEnv, type Env } from "./config.js";
 import { TiDBClient, type SearchResultItem, type ChunkItem } from "./db.js";
@@ -106,6 +108,34 @@ export interface AppOptions {
 export function createApp(options: AppOptions = {}) {
   const app = new Hono();
 
+  app.use(
+    "*",
+    cors({
+      origin: "*",
+      allowHeaders: [
+        "Content-Type",
+        "Authorization",
+        "X-API-Token",
+        "x-api-token",
+        "Mcp-Session-Id",
+        "mcp-session-id",
+        "MCP-Protocol-Version",
+        "mcp-protocol-version",
+        "Last-Event-ID",
+        "last-event-id"
+      ],
+      exposeHeaders: ["Mcp-Session-Id", "mcp-session-id", "Content-Type"],
+      allowMethods: ["GET", "POST", "OPTIONS", "DELETE"]
+    })
+  );
+
+  const activeSessions = new Map<
+    string,
+    {
+      id: string;
+      send: (msg: unknown) => Promise<void>;
+    }
+  >();
   // Lazy or provided dependencies
   let cachedEnv: Env | null = options.env || null;
   let cachedDb: TiDBClient | null = options.db || null;
@@ -517,7 +547,85 @@ export function createApp(options: AppOptions = {}) {
     });
   });
 
-  // --- Remote HTTP Streamable MCP Endpoint ---
+  // --- Remote HTTP Streamable & SSE MCP Endpoints ---
+  const handleMcpSse = async (c: Context) => {
+    const origin = new URL(c.req.url).origin;
+    const env = getEnv();
+
+    const authorized = await isMcpAuthorized(c, env.API_TOKEN, `${origin}/mcp`);
+    if (!authorized) {
+      c.header("WWW-Authenticate", oauthChallenge(origin, "Connect Knowbase to search private data"));
+      return c.json(
+        {
+          error: "unauthorized",
+          error_description: "A valid Bearer token, X-API-Token, or query token is required"
+        },
+        401
+      );
+    }
+
+    const existingSessionId =
+      c.req.header("mcp-session-id") ||
+      c.req.header("Mcp-Session-Id") ||
+      c.req.query("sessionId");
+
+    const sessionId = existingSessionId || crypto.randomUUID();
+    c.header("Mcp-Session-Id", sessionId);
+
+    return streamSSE(c, async (stream) => {
+      activeSessions.set(sessionId, {
+        id: sessionId,
+        send: async (msg: unknown) => {
+          await stream.writeSSE({
+            event: "message",
+            data: JSON.stringify(msg)
+          });
+        }
+      });
+
+      stream.onAbort(() => {
+        activeSessions.delete(sessionId);
+      });
+
+      const queryToken =
+        c.req.query("token") ||
+        c.req.query("api_token") ||
+        c.req.query("apiKey") ||
+        c.req.query("key");
+      const tokenParam = queryToken ? `&token=${encodeURIComponent(queryToken)}` : "";
+
+      // Send initial endpoint event for legacy SSE transport
+      await stream.writeSSE({
+        event: "endpoint",
+        data: `/mcp?sessionId=${sessionId}${tokenParam}`
+      });
+
+      // Keepalive ping every 15s to keep the SSE connection alive
+      while (!stream.aborted) {
+        await stream.sleep(15_000);
+        try {
+          await stream.write(": keepalive\n\n");
+        } catch {
+          break;
+        }
+      }
+    });
+  };
+
+  app.get("/mcp", handleMcpSse);
+  app.get("/sse", handleMcpSse);
+
+  app.delete("/mcp", (c) => {
+    const sessionId =
+      c.req.header("mcp-session-id") ||
+      c.req.header("Mcp-Session-Id") ||
+      c.req.query("sessionId");
+    if (sessionId) {
+      activeSessions.delete(sessionId);
+    }
+    return c.body(null, 204);
+  });
+
   app.post("/mcp", async (c) => {
     const origin = new URL(c.req.url).origin;
     const env = getEnv();
@@ -528,11 +636,18 @@ export function createApp(options: AppOptions = {}) {
       return c.json(
         {
           error: "unauthorized",
-          error_description: "A valid Bearer token or OAuth access token is required"
+          error_description: "A valid Bearer token, X-API-Token, or query token is required"
         },
         401
       );
     }
+
+    const requestedSessionId =
+      c.req.header("mcp-session-id") ||
+      c.req.header("Mcp-Session-Id") ||
+      c.req.query("sessionId");
+    const sessionId = requestedSessionId || crypto.randomUUID();
+    c.header("Mcp-Session-Id", sessionId);
 
     let message: {
       jsonrpc?: string;
@@ -565,13 +680,15 @@ export function createApp(options: AppOptions = {}) {
       return c.body(null, 202);
     }
 
+    let response: unknown;
+
     // MCP initialize
     if (message.method === "initialize") {
       const params = message.params || {};
       const protocolVersion =
         typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18";
 
-      return c.json({
+      response = {
         jsonrpc: "2.0",
         id,
         result: {
@@ -581,92 +698,100 @@ export function createApp(options: AppOptions = {}) {
           instructions:
             "Use search_knowledge_base for semantic retrieval from the user's private knowledge base."
         }
-      });
-    }
-
-    // MCP ping
-    if (message.method === "ping") {
-      return c.json({ jsonrpc: "2.0", id, result: {} });
-    }
-
-    // MCP tools/list
-    if (message.method === "tools/list") {
-      return c.json({
+      };
+    } else if (message.method === "ping") {
+      response = { jsonrpc: "2.0", id, result: {} };
+    } else if (message.method === "tools/list") {
+      response = {
         jsonrpc: "2.0",
         id,
         result: { tools: [SEARCH_TOOL] }
-      });
-    }
-
-    // MCP tools/call
-    if (message.method === "tools/call") {
+      };
+    } else if (message.method === "tools/call") {
       const params = message.params || {};
       if (params.name !== SEARCH_TOOL.name) {
-        return c.json({
+        response = {
           jsonrpc: "2.0",
           id,
           error: { code: -32602, message: "Unknown tool" }
-        });
-      }
-
-      const parsedArgs = SearchRequestSchema.safeParse(params.arguments || {});
-      if (!parsedArgs.success) {
-        return c.json({
-          jsonrpc: "2.0",
-          id,
-          error: {
-            code: -32602,
-            message: "Invalid tool arguments",
-            data: parsedArgs.error.format()
-          }
-        });
-      }
-
-      try {
-        const { query, topK, source } = parsedArgs.data;
-        const results = await getDb().search(query, { topK, source });
-        const responseData = {
-          query,
-          count: results.length,
-          results
         };
+      } else {
+        const parsedArgs = SearchRequestSchema.safeParse(params.arguments || {});
+        if (!parsedArgs.success) {
+          response = {
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32602,
+              message: "Invalid tool arguments",
+              data: parsedArgs.error.format()
+            }
+          };
+        } else {
+          try {
+            const { query, topK, source } = parsedArgs.data;
+            const results = await getDb().search(query, { topK, source });
+            const responseData = {
+              query,
+              count: results.length,
+              results
+            };
 
-        return c.json({
-          jsonrpc: "2.0",
-          id,
-          result: {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(responseData)
+            response = {
+              jsonrpc: "2.0",
+              id,
+              result: {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify(responseData)
+                  }
+                ],
+                structuredContent: responseData,
+                isError: false
               }
-            ],
-            structuredContent: responseData,
-            isError: false
+            };
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            response = {
+              jsonrpc: "2.0",
+              id,
+              result: {
+                content: [{ type: "text", text: `Search failed: ${msg}` }],
+                isError: true
+              }
+            };
           }
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return c.json({
-          jsonrpc: "2.0",
-          id,
-          result: {
-            content: [{ type: "text", text: `Search failed: ${msg}` }],
-            isError: true
-          }
-        });
+        }
       }
+    } else {
+      response = {
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32601, message: "Method not found" }
+      };
     }
 
-    return c.json({
-      jsonrpc: "2.0",
-      id,
-      error: { code: -32601, message: "Method not found" }
-    });
+    // If an active SSE session exists for this sessionId, send response through the stream
+    const activeSession = activeSessions.get(sessionId);
+    if (activeSession) {
+      await activeSession.send(response);
+      return c.body(null, 202);
+    }
+
+    // If client requested text/event-stream exclusively
+    const accept = c.req.header("Accept") || "";
+    if (accept.includes("text/event-stream") && !accept.includes("application/json")) {
+      c.header("Content-Type", "text/event-stream");
+      c.header("Cache-Control", "no-cache");
+      return c.body(`event: message\ndata: ${JSON.stringify(response)}\n\n`);
+    }
+
+    return c.json(response);
   });
 
-  app.on(["GET", "DELETE"], "/mcp", (c) => {
-    c.header("Allow", "POST");
+  app.on(["PUT", "PATCH"], "/mcp", (c) => {
+    c.header("Allow", "GET, POST, DELETE, OPTIONS");
     return c.json({ error: "Method Not Allowed" }, 405);
   });
 

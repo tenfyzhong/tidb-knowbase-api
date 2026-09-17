@@ -122,9 +122,37 @@ In your GitHub repository, navigate to **Settings -> Secrets and variables -> Ac
 
 ## Connecting MCP Clients
 
-### 1. Direct Token Authentication (Claude Desktop, Cursor, Oh My Pi)
+`tidb-knowbase-api` supports all standard MCP transport mechanisms:
+1. **Streamable HTTP** (`POST /mcp` with optional `GET /mcp` stream and `Mcp-Session-Id` header).
+2. **Server-Sent Events (SSE)** (`GET /sse` or `GET /mcp` with `endpoint` discovery).
+3. **Full CORS Support**: Enabled for all web and Electron-based clients (WorkBuddy, Cursor, browser extensions).
 
-Configure the MCP server with your deployed URL and `API_TOKEN`:
+### 1. Direct Token Authentication
+
+You can supply `API_TOKEN` through any of the following methods:
+- **HTTP Header**: `Authorization: Bearer YOUR_API_TOKEN`
+- **Custom Header**: `X-API-Token: YOUR_API_TOKEN`
+- **URL Query Parameter**: `https://your-domain.vercel.app/mcp?token=YOUR_API_TOKEN` (or `/sse?token=YOUR_API_TOKEN`)
+
+#### WorkBuddy / Cursor / GUI MCP Clients
+
+If your client supports entering a URL directly (with or without headers):
+```text
+# URL with token in query param (works with all clients):
+https://your-domain.vercel.app/mcp?token=YOUR_API_TOKEN
+
+# Or for clients dedicated to SSE transport:
+https://your-domain.vercel.app/sse?token=YOUR_API_TOKEN
+```
+If your client supports custom headers:
+```json
+{
+  "url": "https://your-domain.vercel.app/mcp",
+  "headers": {
+    "Authorization": "Bearer YOUR_API_TOKEN"
+  }
+}
+```
 
 #### Claude Desktop (`claude_desktop_config.json`)
 

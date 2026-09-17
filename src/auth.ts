@@ -161,10 +161,28 @@ export async function createPkceChallenge(verifier: string): Promise<string> {
 
 export function getBearerToken(c: Context): string | null {
   const authHeader = c.req.header("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return null;
+  if (authHeader) {
+    if (authHeader.startsWith("Bearer ")) {
+      return authHeader.slice(7).trim() || null;
+    }
+    return authHeader.trim() || null;
   }
-  return authHeader.slice(7).trim() || null;
+
+  const xToken = c.req.header("X-API-Token") || c.req.header("x-api-token");
+  if (xToken) {
+    return xToken.trim() || null;
+  }
+
+  const queryToken =
+    c.req.query("token") ||
+    c.req.query("api_token") ||
+    c.req.query("apiKey") ||
+    c.req.query("key");
+  if (queryToken) {
+    return queryToken.trim() || null;
+  }
+
+  return null;
 }
 
 export function isApiTokenAuthorized(c: Context, apiToken: string): boolean {
