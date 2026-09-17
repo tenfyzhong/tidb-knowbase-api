@@ -1,18 +1,18 @@
 # tidb-knowbase-api
 
-TiDB Cloud Starter Knowledge Base Search & Model Context Protocol (MCP) Server deployed on Vercel.
+TiDB Cloud Starter Knowledge Base Search & Model Context Protocol (MCP) Server deployed on Vercel with native TiDB Auto Embedding.
 
 ## Features
 
-- **TiDB Vector Search**: Direct high-performance semantic search using TiDB's native `VECTOR` column and `VEC_COSINE_DISTANCE` function.
+- **Native Auto Embedding Vector Search**: Uses TiDB Cloud's native `VEC_EMBED_COSINE_DISTANCE(embedding, query)` function. Natural language search queries are passed directly to SQL, where TiDB automatically embeds the query and calculates cosine distance—**completely eliminating the need for any external embedding API keys or local ML dependencies on Vercel**.
 - **Stateless Remote MCP Server**: Remote Streamable HTTP / JSON-RPC 2.0 endpoint at `/mcp` exposing the `search_knowledge_base` tool for AI agents and chat clients.
 - **Enforced TLS Security**: Enforces TLS 1.2+ with certificate validation for all connections to TiDB Cloud Serverless.
 - **Dual Authentication**:
   - Direct Bearer Token (`Authorization: Bearer <API_TOKEN>`) for quick setup in tools like Cursor, Claude Desktop, and CLI scripts.
   - Full OAuth 2.1 with PKCE S256, dynamic client registration, authorization code grants, and rotating refresh tokens for ChatGPT and Claude Code.
-- **Vercel Serverless Ready**: Designed for zero-cold-start, serverless deployment on Vercel's free Hobby tier with `@hono/node-server/vercel`.
+- **Ultra-Fast Vercel Serverless**: No ML model cold start, lightning-fast response times (< 50ms SQL execution) on Vercel's free Hobby tier.
 - **OpenAPI 3.1 Compatibility**: Includes `/openapi.json` for Custom GPT Actions.
-- **100% Free Tier Architecture**: Runs within Vercel's free tier and TiDB Cloud Serverless Starter (free 5 GiB storage, 50M Request Units/month) paired with free embedding models.
+- **100% Free Tier Architecture**: Runs within Vercel's free tier and TiDB Cloud Serverless Starter (free 5 GiB storage, 50M Request Units/month) with **zero external API costs**.
 
 ## Endpoints
 
@@ -46,7 +46,7 @@ REST semantic search endpoint.
     {
       "id": "notes:abc1234:0",
       "score": 0.9421,
-      "text": "TiDB supports vector search with VEC_COSINE_DISTANCE...",
+      "text": "TiDB supports vector search with VEC_EMBED_COSINE_DISTANCE...",
       "source": "notes",
       "path": "docs/tidb-vector.md",
       "title": "TiDB Vector Guide",
@@ -74,7 +74,7 @@ Health check endpoint verifying database connectivity:
 - `GET /oauth/verify`: Token validation.
 
 ### 5. Vector Management Endpoints
-- `POST /vectors/upsert`: Upsert document chunks and embeddings.
+- `POST /vectors/upsert`: Upsert document chunks (TiDB automatically calculates embeddings if not supplied).
 - `POST /vectors/delete`: Delete vectors by ID list.
 - `POST /vectors/clear`: Clear vectors for a source (`?source=notes`) or all sources.
 - `GET /sync-state/:source` & `PUT /sync-state/:source`: Read or save incremental sync state.
@@ -91,11 +91,10 @@ Configure these in **Vercel Dashboard -> Project Settings -> Environment Variabl
 |---|:---:|:---:|---|---|
 | `API_TOKEN` | **Yes** | - | Administrative master key for direct MCP Bearer authentication, OAuth approval, and vector management. | `your-secret-api-token` |
 | `TIDB_DATABASE_URL` | **Yes** | - | Connection string for TiDB Cloud Starter. TLS 1.2+ is enforced automatically. | `mysql://<user>:<password>@gateway.tidbcloud.com:4000/test?ssl={"minVersion":"TLSv1.2"}` |
-| `EMBEDDING_API_KEY` | **Yes** | - | API key for query embedding generation (must match indexer). | `sk-...` |
-| `EMBEDDING_PROVIDER` | No | `openai` | `openai` (SiliconFlow / OpenAI / Ollama), `huggingface`, `gemini`, `mock` | `openai` |
-| `EMBEDDING_BASE_URL` | No | `https://api.siliconflow.cn/v1` | Base URL for OpenAI-compatible embedding provider. | `https://api.siliconflow.cn/v1` |
-| `EMBEDDING_MODEL` | No | `BAAI/bge-m3` | Embedding model identifier (must match indexer). | `BAAI/bge-m3` |
-| `EMBEDDING_DIMENSION` | No | `1024` | Vector dimension size (must match indexer). | `1024` |
+| `EMBEDDING_PROVIDER` | No | `auto` | `auto` (native TiDB Cloud Auto Embedding, zero keys), `openai`, `huggingface`, `gemini`, `mock` | `auto` |
+| `AUTO_EMBEDDING_MODEL` | No | `tidbcloud_free/amazon/titan-embed-text-v2` | Native embedding model on TiDB Cloud. | `tidbcloud_free/amazon/titan-embed-text-v2` |
+| `AUTO_EMBEDDING_DIMENSION` | No | `1024` | Native embedding dimension. | `1024` |
+| `EMBEDDING_API_KEY` | Optional | - | Only needed if switching to custom external embedding providers (`openai`, `huggingface`, `gemini`). | `sk-...` |
 | `TIDB_SSL` | No | `true` | Enforces TLS connection to TiDB Cloud. | `true` |
 | `TIDB_SSL_REJECT_UNAUTHORIZED` | No | `true` | Validates server CA certificate against trusted root CAs. | `true` |
 | `TIDB_CA` | No | - | Optional custom CA certificate content or path. | - |
@@ -180,7 +179,7 @@ Configure the MCP server with your deployed URL and `API_TOKEN`:
 
 1. **Option A: Vercel Git Integration (Recommended)**:
    - Import `tidb-knowbase-api` repository in [Vercel Dashboard](https://vercel.com).
-   - Add environment variables in **Project Settings -> Environment Variables**.
+   - Add environment variables in **Project Settings -> Environment Variables** (only `API_TOKEN` and `TIDB_DATABASE_URL` are required).
    - Every push to `main` deploys automatically.
 
 2. **Option B: Vercel CLI**:
@@ -194,7 +193,6 @@ Configure the MCP server with your deployed URL and `API_TOKEN`:
 ```bash
 API_TOKEN="dev-token" \
 TIDB_DATABASE_URL="mysql://root@127.0.0.1:4000/test" \
-EMBEDDING_PROVIDER="mock" \
 pnpm start
 ```
 

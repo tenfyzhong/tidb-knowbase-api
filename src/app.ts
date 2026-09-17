@@ -518,15 +518,18 @@ export function createApp(options: AppOptions = {}) {
     }
 
     const { query, topK, source } = parsed.data;
-    const embedder = getEmbedder();
-    const [queryVector] = await embedder.embed([query]);
+    let queryParam: string | number[] = query;
 
-    if (!queryVector) {
-      return c.json({ error: "Failed to generate query embedding" }, 500);
+    if (env.EMBEDDING_PROVIDER !== "auto") {
+      const embedder = getEmbedder();
+      const [queryVector] = await embedder.embed([query]);
+      if (!queryVector) {
+        return c.json({ error: "Failed to generate query embedding" }, 500);
+      }
+      queryParam = queryVector;
     }
 
-    const results = await getDb().search(queryVector, { topK, source });
-
+    const results = await getDb().search(queryParam, { topK, source });
     return c.json({
       query,
       count: results.length,
@@ -641,14 +644,18 @@ export function createApp(options: AppOptions = {}) {
 
       try {
         const { query, topK, source } = parsedArgs.data;
-        const embedder = getEmbedder();
-        const [queryVector] = await embedder.embed([query]);
+        let queryParam: string | number[] = query;
 
-        if (!queryVector) {
-          throw new Error("Failed to generate query embedding");
+        if (env.EMBEDDING_PROVIDER !== "auto") {
+          const embedder = getEmbedder();
+          const [queryVector] = await embedder.embed([query]);
+          if (!queryVector) {
+            throw new Error("Failed to generate query embedding");
+          }
+          queryParam = queryVector;
         }
 
-        const results = await getDb().search(queryVector, { topK, source });
+        const results = await getDb().search(queryParam, { topK, source });
         const responseData = {
           query,
           count: results.length,
@@ -717,15 +724,16 @@ export function createApp(options: AppOptions = {}) {
     if (items.length === 0) {
       return c.json({ success: true, count: 0 });
     }
-
-    const embedder = getEmbedder();
-    const texts = items.map((i) => i.text);
-    const embeddings = await embedder.embed(texts);
-
-    const chunkRecords = items.map((item, idx) => ({
-      ...item,
-      embedding: embeddings[idx]
-    }));
+    let chunkRecords: Array<ChunkItem> = items;
+    if (env.EMBEDDING_PROVIDER !== "auto") {
+      const embedder = getEmbedder();
+      const texts = items.map((i) => i.text);
+      const embeddings = await embedder.embed(texts);
+      chunkRecords = items.map((item, idx) => ({
+        ...item,
+        embedding: embeddings[idx]
+      }));
+    }
 
     const count = await getDb().upsertChunks(chunkRecords);
     return c.json({ success: true, count });

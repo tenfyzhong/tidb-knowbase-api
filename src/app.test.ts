@@ -212,6 +212,25 @@ describe("app", () => {
       expect(body.results).toHaveLength(1);
       expect(mockSearch).toHaveBeenCalledTimes(1);
     });
+
+    it("should execute search directly with raw text query in auto embedding mode", async () => {
+      const autoEnv = parseEnv({
+        API_TOKEN: "test-admin-secret-token",
+        TIDB_DATABASE_URL: "mysql://localhost/test",
+        EMBEDDING_PROVIDER: "auto"
+      });
+      const app = createApp({ env: autoEnv, db: mockDb });
+      const res = await app.request("/search", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${autoEnv.API_TOKEN}`
+        },
+        body: JSON.stringify({ query: "how to install TiDB", topK: 3 })
+      });
+      expect(res.status).toBe(200);
+      expect(mockSearch).toHaveBeenCalledWith("how to install TiDB", { topK: 3, source: undefined });
+    });
   });
 
   describe("POST /mcp", () => {
