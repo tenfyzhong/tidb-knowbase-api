@@ -302,17 +302,32 @@ export function createApp(options: AppOptions = {}) {
     // Handle user authorization approval form submission
     if (c.req.method === "POST") {
       let enteredToken = "";
-      const contentType = c.req.header("content-type") || "";
-
-      if (contentType.includes("application/x-www-form-urlencoded")) {
-        const formData = await c.req.formData();
-        enteredToken = String(formData.get("api_token") || "");
-      } else {
-        const json = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-        enteredToken = String(json.api_token || "");
+      try {
+        const contentType = c.req.header("content-type") || "";
+        if (contentType.includes("application/json")) {
+          const json = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+          enteredToken = String(json.api_token || "");
+        } else {
+          const body = (await c.req.parseBody().catch(() => ({}))) as Record<string, unknown>;
+          enteredToken = String(body.api_token || "");
+          if (!enteredToken) {
+            const formData = await c.req.formData().catch(() => null);
+            if (formData) {
+              enteredToken = String(formData.get("api_token") || "");
+            }
+          }
+          if (!enteredToken) {
+            const json = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+            enteredToken = String(json.api_token || "");
+          }
+        }
+      } catch {
+        // ignore parsing errors
       }
 
-      if (enteredToken !== env.API_TOKEN) {
+      enteredToken = enteredToken.trim();
+
+      if (!enteredToken || enteredToken !== env.API_TOKEN.trim()) {
         return c.html(
           renderAuthorizePage({
             origin,

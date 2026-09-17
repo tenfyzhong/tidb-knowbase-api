@@ -186,7 +186,8 @@ export function getBearerToken(c: Context): string | null {
 }
 
 export function isApiTokenAuthorized(c: Context, apiToken: string): boolean {
-  return getBearerToken(c) === apiToken;
+  const token = getBearerToken(c);
+  return Boolean(token && token.trim() === apiToken.trim());
 }
 
 export async function getOAuthTokenGrant(
@@ -229,7 +230,7 @@ export async function isMcpAuthorized(
   }
 
   // 1. Direct Bearer API_TOKEN authorization
-  if (token === apiToken) {
+  if (token && token.trim() === apiToken.trim()) {
     return true;
   }
 

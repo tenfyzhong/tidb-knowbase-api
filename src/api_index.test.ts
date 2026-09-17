@@ -144,4 +144,36 @@ describe("Serverless Bridge (api/index.ts)", () => {
     expect(parsed.client_id).toBeDefined();
     expect(parsed.client_name).toBe("Pre-parsed Client");
   });
+
+  it("should handle POST /oauth/authorize with pre-parsed urlencoded req.body", async () => {
+    // First register client
+    const regReq = createMockReq({
+      method: "POST",
+      url: "/oauth/register",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Authorize Test Client",
+        redirect_uris: ["http://127.0.0.1:8080/callback"]
+      })
+    });
+    const regMock = createMockRes();
+    await handler(regReq, regMock.res);
+    expect(regMock.getStatusCode()).toBe(201);
+    const { client_id: clientId } = JSON.parse(regMock.getBody());
+
+    // Submit authorization form with urlencoded body
+    const authReq = createMockReq({
+      method: "POST",
+      url: `/oauth/authorize?response_type=code&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent("http://127.0.0.1:8080/callback")}`,
+      headers: { "content-type": "application/x-www-form-urlencoded" }
+    });
+    (authReq as unknown as { body: unknown }).body = {
+      api_token: "test-secret-token "
+    };
+
+    const authMock = createMockRes();
+    await handler(authReq, authMock.res);
+    expect(authMock.getStatusCode()).toBe(302);
+    expect(authMock.getHeaders()["location"]).toContain("http://127.0.0.1:8080/callback?code=");
+  });
 });

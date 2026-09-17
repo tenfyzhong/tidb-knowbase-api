@@ -17,7 +17,16 @@ export default async function handler(req: ExtendedRequest, res: ServerResponse)
       } else if (typeof req.body === "string") {
         req.rawBody = Buffer.from(req.body);
       } else {
-        req.rawBody = Buffer.from(JSON.stringify(req.body));
+        const contentType = String(req.headers["content-type"] || "");
+        if (contentType.includes("application/x-www-form-urlencoded") && typeof req.body === "object") {
+          const params = new URLSearchParams();
+          for (const [k, v] of Object.entries(req.body as Record<string, unknown>)) {
+            params.append(k, String(v ?? ""));
+          }
+          req.rawBody = Buffer.from(params.toString());
+        } else {
+          req.rawBody = Buffer.from(JSON.stringify(req.body));
+        }
       }
     } else {
       try {
