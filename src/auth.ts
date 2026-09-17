@@ -204,7 +204,10 @@ export async function getOAuthTokenGrant(
     return null;
   }
   if (expectedResource && grant.resource !== expectedResource) {
-    return null;
+    const normalize = (r: string) => r.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+    if (normalize(grant.resource) !== normalize(expectedResource)) {
+      return null;
+    }
   }
   if (!grant.scope.split(/\s+/).some((scope) => scope === MCP_SCOPE || scope === "read")) {
     return null;

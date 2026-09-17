@@ -153,6 +153,19 @@ export function createApp(options: AppOptions = {}) {
     }
     return cachedDb;
   }
+  function getOrigin(c: Context): string {
+    const url = new URL(c.req.url);
+    const forwardedProto = c.req.header("x-forwarded-proto");
+    const forwardedHost = c.req.header("x-forwarded-host");
+    const host = forwardedHost || c.req.header("host") || url.host;
+
+    let proto = forwardedProto || (url.protocol ? url.protocol.replace(":", "") : "http");
+    if (!host.startsWith("localhost") && !host.startsWith("127.0.0.1") && !host.startsWith("[::1]")) {
+      proto = "https";
+    }
+
+    return `${proto}://${host}`;
+  }
 
   function oauthChallenge(origin: string, description: string): string {
     return `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource", error="invalid_token", error_description="${description}"`;
@@ -181,7 +194,7 @@ export function createApp(options: AppOptions = {}) {
 
   // --- OAuth 2.1 Discovery Endpoints ---
   app.get("/.well-known/oauth-protected-resource", (c) => {
-    const origin = new URL(c.req.url).origin;
+    const origin = getOrigin(c);
     return c.json({
       resource: `${origin}/mcp`,
       authorization_servers: [origin],
@@ -190,7 +203,7 @@ export function createApp(options: AppOptions = {}) {
   });
 
   app.get("/.well-known/oauth-authorization-server", (c) => {
-    const origin = new URL(c.req.url).origin;
+    const origin = getOrigin(c);
     return c.json({
       issuer: origin,
       authorization_endpoint: `${origin}/oauth/authorize`,
@@ -257,7 +270,7 @@ export function createApp(options: AppOptions = {}) {
   // --- OAuth Authorize Endpoint ---
   app.all("/oauth/authorize", async (c) => {
     const url = new URL(c.req.url);
-    const origin = url.origin;
+    const origin = getOrigin(c);
     const env = getEnv();
 
     const responseType = url.searchParams.get("response_type") || "";
@@ -478,7 +491,7 @@ export function createApp(options: AppOptions = {}) {
 
   // --- OpenAPI 3.1.0 Specification ---
   app.get("/openapi.json", (c) => {
-    const origin = new URL(c.req.url).origin;
+    const origin = getOrigin(c);
     return c.json({
       openapi: "3.1.0",
       info: {
@@ -549,7 +562,7 @@ export function createApp(options: AppOptions = {}) {
 
   // --- Remote HTTP Streamable & SSE MCP Endpoints ---
   const handleMcpSse = async (c: Context) => {
-    const origin = new URL(c.req.url).origin;
+    const origin = getOrigin(c);
     const env = getEnv();
 
     const authorized = await isMcpAuthorized(c, env.API_TOKEN, `${origin}/mcp`);
@@ -627,7 +640,7 @@ export function createApp(options: AppOptions = {}) {
   });
 
   app.post("/mcp", async (c) => {
-    const origin = new URL(c.req.url).origin;
+    const origin = getOrigin(c);
     const env = getEnv();
 
     const authorized = await isMcpAuthorized(c, env.API_TOKEN, `${origin}/mcp`);

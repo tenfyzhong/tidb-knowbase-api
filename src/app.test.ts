@@ -89,6 +89,20 @@ describe("app", () => {
       const authBody = await resAuth.json();
       expect(authBody.response_types_supported).toContain("code");
     });
+    it("should return https resource metadata on production domain or forwarded proto", async () => {
+      const app = createApp({ env, db: mockDb });
+
+      const resMeta = await app.request("http://tidb-knowbase-api.tenfy.cn/.well-known/oauth-protected-resource", {
+        headers: {
+          Host: "tidb-knowbase-api.tenfy.cn",
+          "X-Forwarded-Proto": "https"
+        }
+      });
+      expect(resMeta.status).toBe(200);
+      const metaBody = await resMeta.json();
+      expect(metaBody.resource).toBe("https://tidb-knowbase-api.tenfy.cn/mcp");
+      expect(metaBody.authorization_servers).toContain("https://tidb-knowbase-api.tenfy.cn");
+    });
 
     it("should register client, authorize, and exchange token with PKCE", async () => {
       const app = createApp({ env, db: mockDb });
