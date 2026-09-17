@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { resolveSslOptions } from "./db.js";
+import { parseEnv } from "./config.js";
 import {
   isLoopbackRedirectUri,
   parseOAuthRedirectUri,
@@ -85,6 +87,42 @@ describe("auth", () => {
 
       const verified = await verifyOAuthValue("secret-2", "kb_test_", signed);
       expect(verified).toBeNull();
+    });
+  });
+
+  describe("resolveSslOptions", () => {
+    it("should configure TLS with minimum TLSv1.2 by default", () => {
+      const env = parseEnv({
+        API_TOKEN: "secret",
+        TIDB_DATABASE_URL: "mysql://localhost/test"
+      });
+      expect(env.TIDB_SSL).toBe(true);
+      expect(env.TIDB_SSL_REJECT_UNAUTHORIZED).toBe(true);
+
+      const ssl = resolveSslOptions(env);
+      expect(ssl).toEqual({
+        minVersion: "TLSv1.2",
+        rejectUnauthorized: true
+      });
+    });
+
+    it("should support custom CA and disabling TLS if explicitly requested", () => {
+      const envWithCa = parseEnv({
+        API_TOKEN: "secret",
+        TIDB_DATABASE_URL: "mysql://localhost/test",
+        TIDB_CA: "-----BEGIN CERTIFICATE-----\nMOCK\n-----END CERTIFICATE-----",
+        TIDB_SSL_REJECT_UNAUTHORIZED: "false"
+      });
+      const sslWithCa = resolveSslOptions(envWithCa);
+      expect(sslWithCa?.ca).toContain("BEGIN CERTIFICATE");
+      expect(sslWithCa?.rejectUnauthorized).toBe(false);
+
+      const envDisabled = parseEnv({
+        API_TOKEN: "secret",
+        TIDB_DATABASE_URL: "mysql://localhost/test",
+        TIDB_SSL: "false"
+      });
+      expect(resolveSslOptions(envDisabled)).toBeUndefined();
     });
   });
 });
