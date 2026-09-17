@@ -102,4 +102,24 @@ describe("Serverless Bridge (api/index.ts)", () => {
     expect(parsed.client_id).toBeDefined();
     expect(parsed.client_name).toBe("Mock Client");
   });
+
+  it("should handle POST request when req.body is pre-parsed by Vercel runtime", async () => {
+    const req = createMockReq({
+      method: "POST",
+      url: "/oauth/register",
+      headers: { "content-type": "application/json" }
+    });
+    // Simulate Vercel runtime pre-parsing req.body
+    (req as unknown as { body: unknown; readableEnded: boolean }).body = {
+      client_name: "Pre-parsed Client",
+      redirect_uris: ["http://127.0.0.1:8080/callback"]
+    };
+
+    const { res, getStatusCode, getBody } = createMockRes();
+    await handler(req, res);
+    expect(getStatusCode()).toBe(200);
+    const parsed = JSON.parse(getBody());
+    expect(parsed.client_id).toBeDefined();
+    expect(parsed.client_name).toBe("Pre-parsed Client");
+  });
 });

@@ -13,10 +13,28 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   const url = `${protocol}://${host}${req.url || "/"}`;
 
   let body: Buffer | undefined;
-  if (!["GET", "HEAD"].includes(req.method || "GET")) {
+  const anyReq = req as unknown as { body?: unknown; readableEnded?: boolean };
+
+  if (anyReq.body !== undefined && anyReq.body !== null) {
+    if (Buffer.isBuffer(anyReq.body)) {
+      body = anyReq.body;
+    } else if (typeof anyReq.body === "string") {
+      body = Buffer.from(anyReq.body);
+    } else {
+      body = Buffer.from(JSON.stringify(anyReq.body));
+    }
+  } else if (!["GET", "HEAD"].includes(req.method || "GET") && !anyReq.readableEnded) {
     const chunks: Buffer[] = [];
-    for await (const chunk of req) {
-      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    try {
+      const readStream = async () => {
+        for await (const chunk of req) {
+          chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+        }
+      };
+      const timeout = new Promise((resolve) => setTimeout(resolve, 1000));
+      await Promise.race([readStream(), timeout]);
+    } catch {
+      // ignore stream read error
     }
     if (chunks.length > 0) {
       body = Buffer.concat(chunks);
