@@ -20,7 +20,6 @@ export interface ChunkItem {
   title?: string;
   chunkIndex: number;
   url?: string;
-  embedding?: number[];
 }
 
 export interface SyncStateItem {
@@ -33,6 +32,9 @@ export interface SyncState {
   lastCommit?: string;
   files: Record<string, SyncStateItem>;
 }
+
+export const TIDB_AUTO_EMBEDDING_MODEL = "tidbcloud_free/amazon/titan-embed-text-v2";
+export const TIDB_AUTO_EMBEDDING_DIMENSION = 1024;
 
 export function resolveSslOptions(env: Env): mysql.SslOptions | undefined {
   if (env.TIDB_SSL === false) {
@@ -53,12 +55,8 @@ export function resolveSslOptions(env: Env): mysql.SslOptions | undefined {
 
 export class TiDBClient {
   private pool: mysql.Pool;
-  private readonly autoModel: string;
-  private readonly dimension: number;
 
   constructor(env: Env) {
-    this.autoModel = env.AUTO_EMBEDDING_MODEL || "tidbcloud_free/amazon/titan-embed-text-v2";
-    this.dimension = env.AUTO_EMBEDDING_DIMENSION || env.EMBEDDING_DIMENSION || 1024;
     const dbUrl = env.TIDB_DATABASE_URL || env.DATABASE_URL;
     const ssl = resolveSslOptions(env);
 
@@ -88,14 +86,7 @@ export class TiDBClient {
       });
     }
   }
-  async initSchema(options?: { model?: string; dimension?: number }): Promise<void> {
-    const model = options?.model ?? this.autoModel;
-    const dimension = options?.dimension ?? this.dimension;
-
-    const embeddingColumnDef = model
-      ? `embedding VECTOR(${dimension}) GENERATED ALWAYS AS (EMBED_TEXT("${model}", text)) STORED`
-      : `embedding VECTOR(${dimension}) NOT NULL`;
-
+  async initSchema(): Promise<void> {
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS chunks (
         id VARCHAR(255) PRIMARY KEY,
@@ -105,7 +96,9 @@ export class TiDBClient {
         title VARCHAR(255),
         chunk_index INT NOT NULL DEFAULT 0,
         url VARCHAR(1024),
-        ${embeddingColumnDef},
+        embedding VECTOR(${TIDB_AUTO_EMBEDDING_DIMENSION}) GENERATED ALWAYS AS (
+          EMBED_TEXT("${TIDB_AUTO_EMBEDDING_MODEL}", text)
+        ) STORED,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_source (source),
@@ -123,16 +116,10 @@ export class TiDBClient {
   }
 
   async search(
-    query: string | number[],
+    query: string,
     options: { topK?: number; source?: string } = {}
   ): Promise<SearchResultItem[]> {
     const topK = Math.min(Math.max(options.topK || 5, 1), 50);
-
-    const isAutoEmbedding = typeof query === "string";
-    const distanceExpr = isAutoEmbedding
-      ? "VEC_EMBED_COSINE_DISTANCE(embedding, ?)"
-      : "VEC_COSINE_DISTANCE(embedding, VEC_FROM_TEXT(?))";
-    const distanceParam = isAutoEmbedding ? query : JSON.stringify(query);
 
     let sql = `
       SELECT
@@ -143,10 +130,10 @@ export class TiDBClient {
         title,
         chunk_index AS chunkIndex,
         url,
-        ${distanceExpr} AS distance
+        VEC_EMBED_COSINE_DISTANCE(embedding, ?) AS distance
       FROM chunks
     `;
-    const params: unknown[] = [distanceParam];
+    const params: unknown[] = [query];
 
     if (options.source) {
       sql += " WHERE source = ?";
@@ -180,7 +167,6 @@ export class TiDBClient {
 
     const batchSize = 50;
     let totalUpserted = 0;
-    const hasManualEmbeddings = Boolean(chunks[0]?.embedding && chunks[0].embedding.length > 0);
 
     for (let i = 0; i < chunks.length; i += batchSize) {
       const batch = chunks.slice(i, i + batchSize);
@@ -188,58 +174,30 @@ export class TiDBClient {
       const queryParams: unknown[] = [];
 
       for (const item of batch) {
-        if (hasManualEmbeddings && item.embedding) {
-          valuesPlaceholders.push("(?, ?, ?, ?, ?, ?, ?, VEC_FROM_TEXT(?))");
-          queryParams.push(
-            item.id,
-            item.text,
-            item.source,
-            item.path,
-            item.title ?? null,
-            item.chunkIndex,
-            item.url ?? null,
-            JSON.stringify(item.embedding)
-          );
-        } else {
-          valuesPlaceholders.push("(?, ?, ?, ?, ?, ?, ?)");
-          queryParams.push(
-            item.id,
-            item.text,
-            item.source,
-            item.path,
-            item.title ?? null,
-            item.chunkIndex,
-            item.url ?? null
-          );
-        }
+        valuesPlaceholders.push("(?, ?, ?, ?, ?, ?, ?)");
+        queryParams.push(
+          item.id,
+          item.text,
+          item.source,
+          item.path,
+          item.title ?? null,
+          item.chunkIndex,
+          item.url ?? null
+        );
       }
 
-      const sql = hasManualEmbeddings
-        ? `
-          INSERT INTO chunks (id, text, source, path, title, chunk_index, url, embedding)
-          VALUES ${valuesPlaceholders.join(", ")}
-          ON DUPLICATE KEY UPDATE
-            text = VALUES(text),
-            source = VALUES(source),
-            path = VALUES(path),
-            title = VALUES(title),
-            chunk_index = VALUES(chunk_index),
-            url = VALUES(url),
-            embedding = VALUES(embedding),
-            updated_at = CURRENT_TIMESTAMP
-        `
-        : `
-          INSERT INTO chunks (id, text, source, path, title, chunk_index, url)
-          VALUES ${valuesPlaceholders.join(", ")}
-          ON DUPLICATE KEY UPDATE
-            text = VALUES(text),
-            source = VALUES(source),
-            path = VALUES(path),
-            title = VALUES(title),
-            chunk_index = VALUES(chunk_index),
-            url = VALUES(url),
-            updated_at = CURRENT_TIMESTAMP
-        `;
+      const sql = `
+        INSERT INTO chunks (id, text, source, path, title, chunk_index, url)
+        VALUES ${valuesPlaceholders.join(", ")}
+        ON DUPLICATE KEY UPDATE
+          text = VALUES(text),
+          source = VALUES(source),
+          path = VALUES(path),
+          title = VALUES(title),
+          chunk_index = VALUES(chunk_index),
+          url = VALUES(url),
+          updated_at = CURRENT_TIMESTAMP
+      `;
 
       await this.pool.query(sql, queryParams);
       totalUpserted += batch.length;

@@ -2,7 +2,6 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { parseEnv, type Env } from "./config.js";
 import { TiDBClient, type SearchResultItem, type ChunkItem } from "./db.js";
-import { createEmbeddingProvider, type EmbeddingProvider } from "./embedding.js";
 import {
   MCP_SCOPE,
   ACCESS_TOKEN_TTL_SECONDS,
@@ -102,7 +101,6 @@ export const SEARCH_TOOL = {
 export interface AppOptions {
   env?: Env;
   db?: TiDBClient;
-  embedder?: EmbeddingProvider;
 }
 
 export function createApp(options: AppOptions = {}) {
@@ -111,7 +109,6 @@ export function createApp(options: AppOptions = {}) {
   // Lazy or provided dependencies
   let cachedEnv: Env | null = options.env || null;
   let cachedDb: TiDBClient | null = options.db || null;
-  let cachedEmbedder: EmbeddingProvider | null = options.embedder || null;
 
   function getEnv(): Env {
     if (!cachedEnv) {
@@ -125,13 +122,6 @@ export function createApp(options: AppOptions = {}) {
       cachedDb = new TiDBClient(getEnv());
     }
     return cachedDb;
-  }
-
-  function getEmbedder(): EmbeddingProvider {
-    if (!cachedEmbedder) {
-      cachedEmbedder = createEmbeddingProvider(getEnv());
-    }
-    return cachedEmbedder;
   }
 
   function oauthChallenge(origin: string, description: string): string {
@@ -518,18 +508,8 @@ export function createApp(options: AppOptions = {}) {
     }
 
     const { query, topK, source } = parsed.data;
-    let queryParam: string | number[] = query;
+    const results = await getDb().search(query, { topK, source });
 
-    if (env.EMBEDDING_PROVIDER !== "auto") {
-      const embedder = getEmbedder();
-      const [queryVector] = await embedder.embed([query]);
-      if (!queryVector) {
-        return c.json({ error: "Failed to generate query embedding" }, 500);
-      }
-      queryParam = queryVector;
-    }
-
-    const results = await getDb().search(queryParam, { topK, source });
     return c.json({
       query,
       count: results.length,
@@ -644,18 +624,7 @@ export function createApp(options: AppOptions = {}) {
 
       try {
         const { query, topK, source } = parsedArgs.data;
-        let queryParam: string | number[] = query;
-
-        if (env.EMBEDDING_PROVIDER !== "auto") {
-          const embedder = getEmbedder();
-          const [queryVector] = await embedder.embed([query]);
-          if (!queryVector) {
-            throw new Error("Failed to generate query embedding");
-          }
-          queryParam = queryVector;
-        }
-
-        const results = await getDb().search(queryParam, { topK, source });
+        const results = await getDb().search(query, { topK, source });
         const responseData = {
           query,
           count: results.length,
@@ -724,18 +693,8 @@ export function createApp(options: AppOptions = {}) {
     if (items.length === 0) {
       return c.json({ success: true, count: 0 });
     }
-    let chunkRecords: Array<ChunkItem> = items;
-    if (env.EMBEDDING_PROVIDER !== "auto") {
-      const embedder = getEmbedder();
-      const texts = items.map((i) => i.text);
-      const embeddings = await embedder.embed(texts);
-      chunkRecords = items.map((item, idx) => ({
-        ...item,
-        embedding: embeddings[idx]
-      }));
-    }
 
-    const count = await getDb().upsertChunks(chunkRecords);
+    const count = await getDb().upsertChunks(items);
     return c.json({ success: true, count });
   });
 

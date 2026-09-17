@@ -21,20 +21,6 @@ export const EnvSchema = z.object({
     return val ?? true;
   }, z.boolean()).default(true),
   TIDB_CA: z.string().optional(),
-
-  // TiDB Cloud native Auto Embedding configuration
-  AUTO_EMBEDDING_MODEL: z.string().default("tidbcloud_free/amazon/titan-embed-text-v2"),
-  AUTO_EMBEDDING_DIMENSION: z.coerce.number().int().default(1024),
-
-  // Optional external embedding provider configuration
-  EMBEDDING_PROVIDER: z.enum(["auto", "openai", "huggingface", "gemini", "mock"]).default("auto"),
-  EMBEDDING_API_KEY: z.string().optional(),
-  OPENAI_API_KEY: z.string().optional(),
-  HF_TOKEN: z.string().optional(),
-  GEMINI_API_KEY: z.string().optional(),
-  EMBEDDING_BASE_URL: z.string().default("https://api.siliconflow.cn/v1"),
-  EMBEDDING_MODEL: z.string().default("BAAI/bge-m3"),
-  EMBEDDING_DIMENSION: z.coerce.number().int().default(1024),
   // Server port
   PORT: z.coerce.number().int().default(3000)
 });

@@ -74,7 +74,7 @@ Health check endpoint verifying database connectivity:
 - `GET /oauth/verify`: Token validation.
 
 ### 5. Vector Management Endpoints
-- `POST /vectors/upsert`: Upsert document chunks (TiDB automatically calculates embeddings if not supplied).
+- `POST /vectors/upsert`: Upsert document chunks (TiDB automatically calculates embeddings).
 - `POST /vectors/delete`: Delete vectors by ID list.
 - `POST /vectors/clear`: Clear vectors for a source (`?source=notes`) or all sources.
 - `GET /sync-state/:source` & `PUT /sync-state/:source`: Read or save incremental sync state.
@@ -91,14 +91,12 @@ Configure these in **Vercel Dashboard -> Project Settings -> Environment Variabl
 |---|:---:|:---:|---|---|
 | `API_TOKEN` | **Yes** | - | Administrative master key for direct MCP Bearer authentication, OAuth approval, and vector management. | `your-secret-api-token` |
 | `TIDB_DATABASE_URL` | **Yes** | - | Connection string for TiDB Cloud Starter. TLS 1.2+ is enforced automatically. | `mysql://<user>:<password>@gateway.tidbcloud.com:4000/test?ssl={"minVersion":"TLSv1.2"}` |
-| `EMBEDDING_PROVIDER` | No | `auto` | `auto` (native TiDB Cloud Auto Embedding, zero keys), `openai`, `huggingface`, `gemini`, `mock` | `auto` |
-| `AUTO_EMBEDDING_MODEL` | No | `tidbcloud_free/amazon/titan-embed-text-v2` | Native embedding model on TiDB Cloud. | `tidbcloud_free/amazon/titan-embed-text-v2` |
-| `AUTO_EMBEDDING_DIMENSION` | No | `1024` | Native embedding dimension. | `1024` |
-| `EMBEDDING_API_KEY` | Optional | - | Only needed if switching to custom external embedding providers (`openai`, `huggingface`, `gemini`). | `sk-...` |
 | `TIDB_SSL` | No | `true` | Enforces TLS connection to TiDB Cloud. | `true` |
 | `TIDB_SSL_REJECT_UNAUTHORIZED` | No | `true` | Validates server CA certificate against trusted root CAs. | `true` |
 | `TIDB_CA` | No | - | Optional custom CA certificate content or path. | - |
 | `PORT` | No | `3000` | Port for local standalone server execution. | `3000` |
+
+*(Note: No embedding API keys or model parameters are required. TiDB Cloud automatically executes Auto Embedding in SQL).*
 
 ---
 

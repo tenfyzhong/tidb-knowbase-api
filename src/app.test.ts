@@ -2,18 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createApp } from "./app.js";
 import { parseEnv } from "./config.js";
 import type { TiDBClient, SearchResultItem } from "./db.js";
-import { MockEmbeddingProvider } from "./embedding.js";
 import { createPkceChallenge } from "./auth.js";
 
 describe("app", () => {
   const env = parseEnv({
     API_TOKEN: "test-admin-secret-token",
-    TIDB_DATABASE_URL: "mysql://localhost/test",
-    EMBEDDING_PROVIDER: "mock",
-    EMBEDDING_DIMENSION: "128"
+    TIDB_DATABASE_URL: "mysql://localhost/test"
   });
-
-  const embedder = new MockEmbeddingProvider(128);
 
   let mockDb: TiDBClient;
   let mockSearch: ReturnType<typeof vi.fn>;
@@ -56,7 +51,7 @@ describe("app", () => {
   });
 
   it("GET /health should return ok and db status", async () => {
-    const app = createApp({ env, db: mockDb, embedder });
+    const app = createApp({ env, db: mockDb });
     const res = await app.request("/health");
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -65,14 +60,14 @@ describe("app", () => {
   });
 
   it("GET /favicon.svg and /favicon.ico should return svg", async () => {
-    const app = createApp({ env, db: mockDb, embedder });
+    const app = createApp({ env, db: mockDb });
     const res = await app.request("/favicon.svg");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/svg+xml");
   });
 
   it("GET /openapi.json should return OpenAPI 3.1 specification", async () => {
-    const app = createApp({ env, db: mockDb, embedder });
+    const app = createApp({ env, db: mockDb });
     const res = await app.request("/openapi.json");
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -82,7 +77,7 @@ describe("app", () => {
 
   describe("OAuth 2.1 Flow", () => {
     it("should discover authorization server and protected resource", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
 
       const resMeta = await app.request("/.well-known/oauth-protected-resource");
       expect(resMeta.status).toBe(200);
@@ -96,7 +91,7 @@ describe("app", () => {
     });
 
     it("should register client, authorize, and exchange token with PKCE", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
 
       // 1. Register Client
       const regRes = await app.request("/oauth/register", {
@@ -186,7 +181,7 @@ describe("app", () => {
 
   describe("POST /search", () => {
     it("should reject request without bearer token", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
       const res = await app.request("/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -195,8 +190,8 @@ describe("app", () => {
       expect(res.status).toBe(401);
     });
 
-    it("should execute search with valid API_TOKEN", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+    it("should execute search directly with raw text query in auto embedding mode", async () => {
+      const app = createApp({ env, db: mockDb });
       const res = await app.request("/search", {
         method: "POST",
         headers: {
@@ -210,32 +205,13 @@ describe("app", () => {
       expect(body.query).toBe("how to install TiDB");
       expect(body.count).toBe(1);
       expect(body.results).toHaveLength(1);
-      expect(mockSearch).toHaveBeenCalledTimes(1);
-    });
-
-    it("should execute search directly with raw text query in auto embedding mode", async () => {
-      const autoEnv = parseEnv({
-        API_TOKEN: "test-admin-secret-token",
-        TIDB_DATABASE_URL: "mysql://localhost/test",
-        EMBEDDING_PROVIDER: "auto"
-      });
-      const app = createApp({ env: autoEnv, db: mockDb });
-      const res = await app.request("/search", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${autoEnv.API_TOKEN}`
-        },
-        body: JSON.stringify({ query: "how to install TiDB", topK: 3 })
-      });
-      expect(res.status).toBe(200);
       expect(mockSearch).toHaveBeenCalledWith("how to install TiDB", { topK: 3, source: undefined });
     });
   });
 
   describe("POST /mcp", () => {
     it("should return 401 challenge with WWW-Authenticate when unauthenticated", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
       const res = await app.request("/mcp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -246,13 +222,13 @@ describe("app", () => {
     });
 
     it("should reject non-POST methods on /mcp", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
       const res = await app.request("/mcp", { method: "GET" });
       expect(res.status).toBe(405);
     });
 
     it("should handle MCP initialize", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
       const res = await app.request("/mcp", {
         method: "POST",
         headers: {
@@ -274,7 +250,7 @@ describe("app", () => {
     });
 
     it("should handle MCP ping", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
       const res = await app.request("/mcp", {
         method: "POST",
         headers: {
@@ -289,7 +265,7 @@ describe("app", () => {
     });
 
     it("should handle MCP tools/list", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
       const res = await app.request("/mcp", {
         method: "POST",
         headers: {
@@ -305,7 +281,7 @@ describe("app", () => {
     });
 
     it("should handle MCP tools/call for search_knowledge_base", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
       const res = await app.request("/mcp", {
         method: "POST",
         headers: {
@@ -327,10 +303,11 @@ describe("app", () => {
       expect(body.result.isError).toBe(false);
       expect(body.result.structuredContent.results).toHaveLength(1);
       expect(body.result.content[0].type).toBe("text");
+      expect(mockSearch).toHaveBeenCalledWith("what is TiDB vector?", { topK: 5, source: undefined });
     });
 
     it("should handle MCP notifications by returning 202", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
       const res = await app.request("/mcp", {
         method: "POST",
         headers: {
@@ -345,7 +322,7 @@ describe("app", () => {
 
   describe("Administrative Vector Endpoints", () => {
     it("should upsert chunks with valid API_TOKEN", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
       const res = await app.request("/vectors/upsert", {
         method: "POST",
         headers: {
@@ -370,7 +347,7 @@ describe("app", () => {
     });
 
     it("should delete chunks with valid API_TOKEN", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
       const res = await app.request("/vectors/delete", {
         method: "POST",
         headers: {
@@ -386,7 +363,7 @@ describe("app", () => {
     });
 
     it("should clear vectors with valid API_TOKEN", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
       const res = await app.request("/vectors/clear?source=notes", {
         method: "POST",
         headers: {
@@ -400,7 +377,7 @@ describe("app", () => {
     });
 
     it("should get and put sync state", async () => {
-      const app = createApp({ env, db: mockDb, embedder });
+      const app = createApp({ env, db: mockDb });
 
       const getRes = await app.request("/sync-state/notes", {
         headers: { Authorization: `Bearer ${env.API_TOKEN}` }
