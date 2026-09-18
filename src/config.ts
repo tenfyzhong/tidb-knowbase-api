@@ -21,6 +21,18 @@ export const EnvSchema = z.object({
     return val ?? true;
   }, z.boolean()).default(true),
   TIDB_CA: z.string().optional(),
+  // Embedding settings
+  EMBEDDING_PROVIDER: z
+    .enum(["openai", "siliconflow", "huggingface", "gemini", "jina", "tidb_auto", "auto", "mock"])
+    .optional(),
+  EMBEDDING_API_KEY: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional(),
+  HF_TOKEN: z.string().optional(),
+  GEMINI_API_KEY: z.string().optional(),
+  JINA_API_KEY: z.string().optional(),
+  EMBEDDING_BASE_URL: z.string().optional(),
+  EMBEDDING_MODEL: z.string().optional(),
+  EMBEDDING_DIMENSION: z.coerce.number().int().positive().optional(),
   // Server port
   PORT: z.coerce.number().int().default(3000)
 });
