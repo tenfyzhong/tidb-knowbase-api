@@ -1,9 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   createEmbeddingProvider,
-  HuggingFaceEmbeddingProvider,
+  CloudflareEmbeddingProvider,
   MockEmbeddingProvider,
-  OpenAIEmbeddingProvider,
   TiDBAutoEmbeddingProvider
 } from "./embedding.js";
 import type { Env } from "./config.js";
@@ -36,7 +35,7 @@ describe("Embedding Providers (API)", () => {
     });
   });
 
-  describe("OpenAIEmbeddingProvider", () => {
+  describe("CloudflareEmbeddingProvider", () => {
     const originalFetch = global.fetch;
 
     beforeEach(() => {
@@ -47,7 +46,7 @@ describe("Embedding Providers (API)", () => {
       global.fetch = originalFetch;
     });
 
-    it("embeds query text via OpenAI-compatible endpoint", async () => {
+    it("embeds query text via Cloudflare endpoint", async () => {
       const mockResponse = {
         data: [{ index: 0, embedding: [0.1, 0.2, 0.3] }]
       };
@@ -57,135 +56,76 @@ describe("Embedding Providers (API)", () => {
         json: async () => mockResponse
       });
 
-      const provider = new OpenAIEmbeddingProvider({
-        apiKey: "sk-test",
-        baseUrl: "https://api.siliconflow.cn/v1",
-        model: "BAAI/bge-m3",
+      const provider = new CloudflareEmbeddingProvider({
+        accountId: "my-cf-acc",
+        apiToken: "cf-token",
+        model: "@cf/baai/bge-m3",
         dimension: 3
       });
 
       const results = await provider.embed(["query text"]);
       expect(results).toEqual([[0.1, 0.2, 0.3]]);
-    });
-  });
-  describe("HuggingFaceEmbeddingProvider", () => {
-    const originalFetch = global.fetch;
-
-    beforeEach(() => {
-      global.fetch = vi.fn();
-    });
-
-    afterEach(() => {
-      global.fetch = originalFetch;
-    });
-
-    it("calls HuggingFace router pipeline/feature-extraction endpoint with token and x-wait-for-model", async () => {
-      (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        ok: true,
-        json: async () => [
-          [0.1, 0.2],
-          [0.3, 0.4]
-        ]
-      });
-
-      const provider = new HuggingFaceEmbeddingProvider({
-        token: "hf_test",
-        model: "BAAI/bge-m3",
-        dimension: 2
-      });
-
-      const results = await provider.embed(["A", "B"]);
-      expect(results).toEqual([
-        [0.1, 0.2],
-        [0.3, 0.4]
-      ]);
       expect(global.fetch).toHaveBeenCalledWith(
-        "https://router.huggingface.co/hf-inference/models/BAAI/bge-m3/pipeline/feature-extraction",
+        "https://api.cloudflare.com/client/v4/accounts/my-cf-acc/ai/v1/embeddings",
         expect.objectContaining({
           method: "POST",
           headers: expect.objectContaining({
-            Authorization: "Bearer hf_test",
-            "x-wait-for-model": "true"
-          }),
-          body: JSON.stringify({
-            inputs: ["A", "B"],
-            options: { wait_for_model: true }
+            Authorization: "Bearer cf-token"
           })
         })
       );
     });
 
-    it("handles 3D array response (token-level embeddings) and applies mean pooling", async () => {
+    it("parses Cloudflare direct run response format ({ result: { data: [...] } })", async () => {
+      const mockRunResponse = {
+        result: {
+          data: [[0.5, 0.6, 0.7]]
+        },
+        success: true
+      };
+
       (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         ok: true,
-        json: async () => [
-          [
-            [1.0, 3.0],
-            [3.0, 5.0]
-          ]
-        ]
+        json: async () => mockRunResponse
       });
 
-      const provider = new HuggingFaceEmbeddingProvider({
-        token: "hf_test",
-        model: "BAAI/bge-m3",
-        dimension: 2
+      const provider = new CloudflareEmbeddingProvider({
+        baseUrl: "https://api.cloudflare.com/client/v4/accounts/my-cf-acc/ai/run/@cf/baai/bge-m3",
+        apiToken: "cf-token",
+        dimension: 3
       });
 
-      const results = await provider.embed(["Sentence to pool"]);
-      expect(results).toEqual([[2.0, 4.0]]);
+      const results = await provider.embed(["query text"]);
+      expect(results).toEqual([[0.5, 0.6, 0.7]]);
     });
-    it("retries on 504 Gateway Time-out and succeeds on subsequent attempt", async () => {
+
+    it("retries on 429 and 500 status codes with backoff and succeeds", async () => {
       (global.fetch as unknown as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({
           ok: false,
-          status: 504,
-          statusText: "Gateway Time-out",
-          text: async () => "<html><head><title>504 Gateway Time-out</title></head></html>"
+          status: 429,
+          statusText: "Too Many Requests",
+          text: async () => "Rate limited"
         })
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => [[0.9, 0.8]]
+          json: async () => ({
+            data: [{ index: 0, embedding: [0.9, 0.8] }]
+          })
         });
 
-      const provider = new HuggingFaceEmbeddingProvider({
-        token: "hf_test",
-        model: "BAAI/bge-m3",
+      const provider = new CloudflareEmbeddingProvider({
+        accountId: "my-cf-acc",
+        apiToken: "cf-token",
         dimension: 2,
         retryDelayMs: 1
       });
 
-      const results = await provider.embed(["test text"]);
+      const results = await provider.embed(["query text"]);
       expect(results).toEqual([[0.9, 0.8]]);
       expect(global.fetch).toHaveBeenCalledTimes(2);
     });
-
-    it("retries on 503 model loading with estimated_time", async () => {
-      (global.fetch as unknown as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 503,
-          statusText: "Service Unavailable",
-          text: async () => JSON.stringify({ error: "Model BAAI/bge-m3 is currently loading", estimated_time: 0.001 })
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => [[0.7, 0.6]]
-        });
-
-      const provider = new HuggingFaceEmbeddingProvider({
-        token: "hf_test",
-        model: "BAAI/bge-m3",
-        dimension: 2,
-        retryDelayMs: 1
-      });
-
-      const results = await provider.embed(["test text"]);
-      expect(results).toEqual([[0.7, 0.6]]);
-      expect(global.fetch).toHaveBeenCalledTimes(2);
-    });
   });
-
 
   describe("createEmbeddingProvider", () => {
     it("creates Mock provider when EMBEDDING_PROVIDER=mock", () => {
@@ -205,6 +145,25 @@ describe("Embedding Providers (API)", () => {
       });
       expect(provider).toBeInstanceOf(TiDBAutoEmbeddingProvider);
       expect(provider.isAutoEmbedding).toBe(true);
+    });
+
+    it("defaults to Cloudflare provider when CLOUDFLARE_API_TOKEN is provided", () => {
+      const provider = createEmbeddingProvider({
+        ...baseEnv,
+        CLOUDFLARE_API_TOKEN: "cf-token",
+        CLOUDFLARE_ACCOUNT_ID: "acc-id"
+      });
+      expect(provider).toBeInstanceOf(CloudflareEmbeddingProvider);
+      expect(provider.model).toBe("@cf/baai/bge-m3");
+    });
+
+    it("creates Cloudflare provider when EMBEDDING_PROVIDER=cloudflare or cf", () => {
+      const provider = createEmbeddingProvider({
+        ...baseEnv,
+        EMBEDDING_PROVIDER: "cloudflare",
+        CLOUDFLARE_ACCOUNT_ID: "acc-id"
+      });
+      expect(provider).toBeInstanceOf(CloudflareEmbeddingProvider);
     });
   });
 });
