@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   createEmbeddingProvider,
+  HuggingFaceEmbeddingProvider,
   MockEmbeddingProvider,
   OpenAIEmbeddingProvider,
   TiDBAutoEmbeddingProvider
@@ -67,6 +68,75 @@ describe("Embedding Providers (API)", () => {
       expect(results).toEqual([[0.1, 0.2, 0.3]]);
     });
   });
+  describe("HuggingFaceEmbeddingProvider", () => {
+    const originalFetch = global.fetch;
+
+    beforeEach(() => {
+      global.fetch = vi.fn();
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it("calls HuggingFace router pipeline/feature-extraction endpoint with token and x-wait-for-model", async () => {
+      (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          [0.1, 0.2],
+          [0.3, 0.4]
+        ]
+      });
+
+      const provider = new HuggingFaceEmbeddingProvider({
+        token: "hf_test",
+        model: "BAAI/bge-m3",
+        dimension: 2
+      });
+
+      const results = await provider.embed(["A", "B"]);
+      expect(results).toEqual([
+        [0.1, 0.2],
+        [0.3, 0.4]
+      ]);
+      expect(global.fetch).toHaveBeenCalledWith(
+        "https://router.huggingface.co/hf-inference/models/BAAI/bge-m3/pipeline/feature-extraction",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            Authorization: "Bearer hf_test",
+            "x-wait-for-model": "true"
+          }),
+          body: JSON.stringify({
+            inputs: ["A", "B"],
+            options: { wait_for_model: true }
+          })
+        })
+      );
+    });
+
+    it("handles 3D array response (token-level embeddings) and applies mean pooling", async () => {
+      (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          [
+            [1.0, 3.0],
+            [3.0, 5.0]
+          ]
+        ]
+      });
+
+      const provider = new HuggingFaceEmbeddingProvider({
+        token: "hf_test",
+        model: "BAAI/bge-m3",
+        dimension: 2
+      });
+
+      const results = await provider.embed(["Sentence to pool"]);
+      expect(results).toEqual([[2.0, 4.0]]);
+    });
+  });
+
 
   describe("createEmbeddingProvider", () => {
     it("creates Mock provider when EMBEDDING_PROVIDER=mock", () => {
