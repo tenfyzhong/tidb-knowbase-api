@@ -135,6 +135,55 @@ describe("Embedding Providers (API)", () => {
       const results = await provider.embed(["Sentence to pool"]);
       expect(results).toEqual([[2.0, 4.0]]);
     });
+    it("retries on 504 Gateway Time-out and succeeds on subsequent attempt", async () => {
+      (global.fetch as unknown as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 504,
+          statusText: "Gateway Time-out",
+          text: async () => "<html><head><title>504 Gateway Time-out</title></head></html>"
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [[0.9, 0.8]]
+        });
+
+      const provider = new HuggingFaceEmbeddingProvider({
+        token: "hf_test",
+        model: "BAAI/bge-m3",
+        dimension: 2,
+        retryDelayMs: 1
+      });
+
+      const results = await provider.embed(["test text"]);
+      expect(results).toEqual([[0.9, 0.8]]);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("retries on 503 model loading with estimated_time", async () => {
+      (global.fetch as unknown as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 503,
+          statusText: "Service Unavailable",
+          text: async () => JSON.stringify({ error: "Model BAAI/bge-m3 is currently loading", estimated_time: 0.001 })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [[0.7, 0.6]]
+        });
+
+      const provider = new HuggingFaceEmbeddingProvider({
+        token: "hf_test",
+        model: "BAAI/bge-m3",
+        dimension: 2,
+        retryDelayMs: 1
+      });
+
+      const results = await provider.embed(["test text"]);
+      expect(results).toEqual([[0.7, 0.6]]);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
   });
 
 
