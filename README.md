@@ -4,15 +4,16 @@ TiDB Cloud Starter Knowledge Base Search & Model Context Protocol (MCP) Server d
 
 ## Features
 
-- **Native Auto Embedding Vector Search**: Uses TiDB Cloud's native `VEC_EMBED_COSINE_DISTANCE(embedding, query)` function. Natural language search queries are passed directly to SQL, where TiDB automatically embeds the query and calculates cosine distance—**completely eliminating the need for any external embedding API keys or local ML dependencies on Vercel**.
+- **Universal Vector Search**: Supports both Cloudflare Workers AI embeddings (`@cf/baai/bge-m3`, 1024-dim, 10,000 Neurons/day free) and TiDB Cloud native Auto Embedding (`VEC_EMBED_COSINE_DISTANCE`) on AWS.
+- **PingCAP Cloud China Ready**: Works out-of-the-box with `console.cloud.pingkai.cn` by pairing with Cloudflare Workers AI with zero cold start.
 - **Stateless Remote MCP Server**: Remote Streamable HTTP / JSON-RPC 2.0 endpoint at `/mcp` exposing the `search_knowledge_base` tool for AI agents and chat clients.
 - **Enforced TLS Security**: Enforces TLS 1.2+ with certificate validation for all connections to TiDB Cloud Serverless.
 - **Dual Authentication**:
   - Direct Bearer Token (`Authorization: Bearer <API_TOKEN>`) for quick setup in tools like Cursor, Claude Desktop, and CLI scripts.
   - Full OAuth 2.1 with PKCE S256, dynamic client registration, authorization code grants, and rotating refresh tokens for ChatGPT and Claude Code.
-- **Ultra-Fast Vercel Serverless**: No ML model cold start, lightning-fast response times (< 50ms SQL execution) on Vercel's free Hobby tier.
+- **Ultra-Fast Vercel Serverless**: No heavy ML weights loaded in serverless functions, lightning-fast response times on Vercel's free Hobby tier.
 - **OpenAPI 3.1 Compatibility**: Includes `/openapi.json` for Custom GPT Actions.
-- **100% Free Tier Architecture**: Runs within Vercel's free tier and TiDB Cloud Serverless Starter (free 5 GiB storage, 50M Request Units/month) with **zero external API costs**.
+- **100% Free Tier Architecture**: Runs within Vercel's free tier and TiDB Cloud Serverless Starter (free 5 GiB storage, 50M Request Units/month).
 
 ## Endpoints
 
@@ -91,13 +92,25 @@ Configure these in **Vercel Dashboard -> Project Settings -> Environment Variabl
 |---|:---:|:---:|---|---|
 | `API_TOKEN` | **Yes** | - | Administrative master key for direct MCP Bearer authentication, OAuth approval, and vector management. | `your-secret-api-token` |
 | `TIDB_DATABASE_URL` | **Yes** | - | Connection string for TiDB Cloud Starter. TLS 1.2+ is enforced automatically. | `mysql://<user>:<password>@gateway.tidbcloud.com:4000/test?ssl={"minVersion":"TLSv1.2"}` |
+| `EMBEDDING_PROVIDER` | No | `cloudflare` | Embedding provider: `cloudflare` (or `cf`), `tidb_auto` (or `auto`), `mock`. | `cloudflare` |
+| `CLOUDFLARE_API_TOKEN` | Required for Cloudflare | - | Cloudflare API Token with Workers AI Read permission (or `EMBEDDING_API_KEY`). | `Bearer ...` |
+| `CLOUDFLARE_ACCOUNT_ID` | Required for Cloudflare | - | Cloudflare 32-character Account ID. | `0123456789abcdef0123456789abcdef` |
+| `CLOUDFLARE_MODEL` | No | `@cf/baai/bge-m3` | Embedding model identifier on Cloudflare. | `@cf/baai/bge-m3` |
+| `CLOUDFLARE_BASE_URL` | No | `https://api.cloudflare.com/client/v4` | Optional custom Cloudflare base URL or AI Gateway URL. | - |
+| `EMBEDDING_DIMENSION` | No | `1024` | Embedding vector dimension size. | `1024` |
 | `TIDB_SSL` | No | `true` | Enforces TLS connection to TiDB Cloud. | `true` |
 | `TIDB_SSL_REJECT_UNAUTHORIZED` | No | `true` | Validates server CA certificate against trusted root CAs. | `true` |
 | `TIDB_CA` | No | - | Optional custom CA certificate content or path. | - |
 | `PORT` | No | `3000` | Port for local standalone server execution. | `3000` |
 
-*(Note: No embedding API keys or model parameters are required. TiDB Cloud automatically executes Auto Embedding in SQL).*
+### Free Tier Embedding Configuration
 
+- **For PingCAP Cloud China (`console.cloud.pingkai.cn`) or Global TiDB Cloud via Cloudflare**:
+  1. Copy your Cloudflare **Account ID** from Cloudflare Dashboard.
+  2. Create a Cloudflare API Token under **My Profile -> API Tokens** with `Workers AI: Read` permission.
+  3. In Vercel Project Settings, set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (model defaults to `@cf/baai/bge-m3`, 1024 dimensions, 100% free with 10,000 Neurons/day).
+- **For TiDB Cloud Global (`tidbcloud.com` on AWS) via Native Auto Embedding**:
+  Set `EMBEDDING_PROVIDER=tidb_auto` (zero keys needed; uses native Bedrock `titan-embed-text-v2`).
 ---
 
 ### 2. GitHub Actions Workflows & Parameters

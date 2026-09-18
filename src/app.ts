@@ -105,7 +105,7 @@ export interface AppOptions {
   db?: TiDBClient;
 }
 
-export function createApp(options: AppOptions = {}) {
+export function createApp(options: AppOptions = {}): Hono {
   const app = new Hono();
 
   app.use(
@@ -1047,5 +1047,5 @@ function renderAuthorizePage(params: {
 </html>`;
 }
 
-const defaultApp = createApp();
+const defaultApp: Hono = createApp();
 export default defaultApp;
